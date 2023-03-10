@@ -19,7 +19,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define LOGO_HEIGHT   25
 #define LOGO_WIDTH    25
 
-#define MICLEVEL 931
+#define MICLEVEL 1023
 
 static const unsigned char PROGMEM talk_bmp[] =
 { 0x00, 0x7f, 0x00, 0x00, 
@@ -200,8 +200,7 @@ void setup() {
   pinMode(MUTELIGHT, OUTPUT);    // Use Built-In LED for Indication
   pinMode(BUTTON, INPUT_PULLUP);      // Push-Button On Bread Board
   display.clearDisplay();
-  Serial.begin(9600);
-  
+    
   display.clearDisplay();
 
   
@@ -249,6 +248,8 @@ void setup() {
 //  delay(1000);
 //  display.invertDisplay(false);
 //  delay(1000);
+  delay(2000);
+  Serial.begin(9600);
 }
 
 float height_ = 0;
