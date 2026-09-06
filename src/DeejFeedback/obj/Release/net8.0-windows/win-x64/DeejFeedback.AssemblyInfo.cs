@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("DeejFeedback")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("0.2.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.2.0-preview")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("0.2.1.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.2.1-preview+768935cfa1811e50402d1c5692fdbfffa4e6072a")]
 [assembly: System.Reflection.AssemblyProductAttribute("DeejFeedback")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DeejFeedback")]
-[assembly: System.Reflection.AssemblyVersionAttribute("0.2.0.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("0.2.1.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

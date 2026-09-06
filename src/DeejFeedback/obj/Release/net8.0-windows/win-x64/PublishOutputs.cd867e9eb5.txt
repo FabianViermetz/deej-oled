@@ -1,0 +1,2 @@
+C:\Users\micro\OneDrive\Documents\GitHub\deej-oled\release\DeejFeedback\DeejFeedback.pdb
+C:\Users\micro\OneDrive\Documents\GitHub\deej-oled\release\DeejFeedback\DeejFeedback.exe

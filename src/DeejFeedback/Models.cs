@@ -12,7 +12,6 @@ public sealed class AppConfig
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
     public bool PrivacyMuteAllCaptureDevices { get; set; } = true;
-    public bool MuteNewCaptureDevicesWhileLocked { get; set; } = true;
     public int DisplaySleepSeconds { get; set; } = 30;
     public bool ContinuousFaderUpdates { get; set; }
     public int ControllerHeartbeatMs { get; set; } = 1000;

@@ -9,26 +9,69 @@ namespace DeejFeedback;
 public sealed class AudioEngine : IDisposable
 {
     private readonly MMDeviceEnumerator _enumerator = new();
-    private readonly Dictionary<string, bool> _muteBeforeLock = new();
-    public bool PrivacyLock { get; private set; }
+    private readonly List<MMDevice> _renderDevices = new();
+    private readonly Dictionary<string, List<CachedSession>> _sessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Stopwatch _inventoryAge = new();
+    private sealed record CachedSession(AudioSessionControl Control, string Name, string DeviceName);
+
+    // Called on the UI thread. Discovery is independent of the feedback interval.
+    public void RefreshRenderInventory(bool force = false)
+    {
+        if (!force && _inventoryAge.IsRunning && _inventoryAge.ElapsedMilliseconds < 3000) return;
+        ClearRenderInventory();
+        _inventoryAge.Restart();
+        foreach (var device in _enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        {
+            _renderDevices.Add(device);
+            try
+            {
+                var sessions = device.AudioSessionManager.Sessions;
+                for (var i = 0; i < sessions.Count; i++)
+                {
+                    var session = sessions[i];
+                    try
+                    {
+                        var processName = "system";
+                        if (session.GetProcessID != 0)
+                        {
+                            using var process = Process.GetProcessById((int)session.GetProcessID);
+                            processName = process.ProcessName + ".exe";
+                        }
+                        var name = string.IsNullOrWhiteSpace(session.DisplayName) ? processName : session.DisplayName;
+                        if (!_sessions.TryGetValue(processName, out var group))
+                            _sessions[processName] = group = new();
+                        group.Add(new(session, name, device.FriendlyName));
+                    }
+                    catch { session.Dispose(); }
+                }
+            }
+            catch { /* Retry unavailable devices at the next inventory refresh. */ }
+        }
+    }
+
+    private void ClearRenderInventory()
+    {
+        foreach (var group in _sessions.Values)
+            foreach (var session in group) session.Control.Dispose();
+        _sessions.Clear();
+        foreach (var device in _renderDevices) device.Dispose();
+        _renderDevices.Clear();
+    }
 
     public IReadOnlyList<AudioSessionInfo> GetRenderSessions()
     {
         var result = new List<AudioSessionInfo>();
-        foreach (var device in _enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        foreach (var group in _sessions)
         {
-            try
+            foreach (var session in group.Value)
             {
-                for (var i = 0; i < device.AudioSessionManager.Sessions.Count; i++)
+                try
                 {
-                    var session = device.AudioSessionManager.Sessions[i];
-                    var processName = "system";
-                    try { if (session.GetProcessID != 0) processName = Process.GetProcessById((int)session.GetProcessID).ProcessName + ".exe"; } catch { }
-                    result.Add(new(processName, string.IsNullOrWhiteSpace(session.DisplayName) ? processName : session.DisplayName,
-                        session.SimpleAudioVolume.Volume, session.SimpleAudioVolume.Mute, device.FriendlyName));
+                    var volume = session.Control.SimpleAudioVolume;
+                    result.Add(new(group.Key, session.Name, volume.Volume, volume.Mute, session.DeviceName));
                 }
+                catch { }
             }
-            catch { }
         }
         return result;
     }
@@ -40,78 +83,71 @@ public sealed class AudioEngine : IDisposable
         {
             try { result.Add(new(device.ID, device.FriendlyName, device.AudioEndpointVolume.Mute, device.AudioMeterInformation.MasterPeakValue)); }
             catch { result.Add(new(device.ID, device.FriendlyName, false, 0)); }
+            finally { device.Dispose(); }
         }
         return result;
     }
 
     public float SetTargetsVolume(IEnumerable<string> targetNames, float requested)
     {
-        var targets = new HashSet<string>(targetNames, StringComparer.OrdinalIgnoreCase);
         var actual = requested;
-        foreach (var device in _enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+        foreach (var target in targetNames.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            try
+            if (!_sessions.TryGetValue(target, out var sessions)) continue;
+            foreach (var session in sessions)
             {
-                for (var i = 0; i < device.AudioSessionManager.Sessions.Count; i++)
+                try
                 {
-                    var session = device.AudioSessionManager.Sessions[i];
-                    string name;
-                    try { name = session.GetProcessID == 0 ? "system" : Process.GetProcessById((int)session.GetProcessID).ProcessName + ".exe"; }
-                    catch { continue; }
-                    if (!targets.Contains(name)) continue;
-                    session.SimpleAudioVolume.Volume = Math.Clamp(requested, 0, 1);
-                    actual = session.SimpleAudioVolume.Volume;
+                    session.Control.SimpleAudioVolume.Volume = Math.Clamp(requested, 0, 1);
+                    actual = session.Control.SimpleAudioVolume.Volume;
                 }
+                catch { }
             }
-            catch { }
         }
         return actual;
     }
 
     public PrivacyState TogglePrivacyMute(bool allDevices)
     {
-        if (PrivacyLock) return ReleasePrivacyMute();
-        PrivacyLock = true;
-        _muteBeforeLock.Clear();
         var devices = GetCaptureEndpoints(allDevices);
-        var success = devices.Count > 0;
-        foreach (var device in devices)
+        try
         {
-            try { _muteBeforeLock[device.ID] = device.AudioEndpointVolume.Mute; device.AudioEndpointVolume.Mute = true; success &= device.AudioEndpointVolume.Mute; }
-            catch { success = false; }
-        }
-        return success ? PrivacyState.MutedConfirmed : PrivacyState.Uncertain;
-    }
-
-    public PrivacyState EnforcePrivacyMute(bool allDevices)
-    {
-        if (!PrivacyLock) return PrivacyState.Active;
-        var devices = GetCaptureEndpoints(allDevices);
-        var success = devices.Count > 0;
-        foreach (var device in devices)
-        {
-            try
+            // Only a fully verified muted group may be unmuted by a toggle.
+            // Mixed or unreadable groups receive a mute request instead.
+            var mute = ReadPrivacyState(devices) != PrivacyState.MutedConfirmed;
+            var success = devices.Count > 0;
+            foreach (var device in devices)
             {
-                if (!_muteBeforeLock.ContainsKey(device.ID)) _muteBeforeLock[device.ID] = device.AudioEndpointVolume.Mute;
-                if (!device.AudioEndpointVolume.Mute) device.AudioEndpointVolume.Mute = true;
-                success &= device.AudioEndpointVolume.Mute;
+                try { device.AudioEndpointVolume.Mute = mute; }
+                catch { success = false; }
             }
-            catch { success = false; }
+            var actual = ReadPrivacyState(devices);
+            return success && actual == (mute ? PrivacyState.MutedConfirmed : PrivacyState.Active)
+                ? actual : PrivacyState.Uncertain;
         }
-        return success ? PrivacyState.MutedConfirmed : PrivacyState.Uncertain;
+        finally { foreach (var device in devices) device.Dispose(); }
     }
 
-    private PrivacyState ReleasePrivacyMute()
+    public PrivacyState GetPrivacyState(bool allDevices)
     {
-        var success = true;
-        foreach (var device in _enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+        var devices = GetCaptureEndpoints(allDevices);
+        try { return ReadPrivacyState(devices); }
+        finally { foreach (var device in devices) device.Dispose(); }
+    }
+
+    private static PrivacyState ReadPrivacyState(IReadOnlyList<MMDevice> devices)
+    {
+        if (devices.Count == 0) return PrivacyState.Uncertain;
+        var muted = 0;
+        var failed = false;
+        foreach (var device in devices)
         {
-            if (!_muteBeforeLock.TryGetValue(device.ID, out var prior)) continue;
-            try { device.AudioEndpointVolume.Mute = prior; success &= device.AudioEndpointVolume.Mute == prior; } catch { success = false; }
+            try { if (device.AudioEndpointVolume.Mute) muted++; }
+            catch { failed = true; }
         }
-        PrivacyLock = false;
-        _muteBeforeLock.Clear();
-        return success ? PrivacyState.Active : PrivacyState.Uncertain;
+        if (failed) return PrivacyState.Uncertain;
+        if (muted == devices.Count) return PrivacyState.MutedConfirmed;
+        return muted == 0 ? PrivacyState.Active : PrivacyState.Uncertain;
     }
 
     private List<MMDevice> GetCaptureEndpoints(bool allDevices)
@@ -121,5 +157,9 @@ public sealed class AudioEngine : IDisposable
         catch { return []; }
     }
 
-    public void Dispose() => _enumerator.Dispose();
+    public void Dispose()
+    {
+        ClearRenderInventory();
+        _enumerator.Dispose();
+    }
 }

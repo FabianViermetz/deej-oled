@@ -58,6 +58,16 @@ Smaller intervals give more frequent updates and higher traffic/CPU use. A 100 m
 The Arduino adjusts its PC timeout to at least three feedback intervals (minimum 2.5 seconds). Slower feedback also delays polling-based detection of externally changed mute states and newly attached devices. The settings therefore control more than visual animation speed.
 
 ## Configuration and startup
+### CPU usage and application discovery
+Output devices, audio-session handles and process names are cached. Fader writes target cached sessions directly, without scanning devices or looking up processes on every movement. The output inventory is rebuilt approximately every three seconds (on the next feedback tick), independently of the configured feedback interval. Newly started applications can therefore take up to three seconds plus one feedback interval to become controllable. Continuous mode applies the current fader values after discovery; otherwise move the fader after discovery.
+
+The Assignments tab loads its application list once when first opened. Use **Refresh applications** to scan again immediately. This is a list of applications with audio sessions, not every running Windows process; play audio in a missing application and refresh. Selection is preserved when possible. The list no longer displays continuously changing volume percentages.
+
+Mixer bars and input-level lists are updated only while the Mixer tab is visible. Unchanged input rows and connection/privacy indicators are not rebuilt. Audio feedback, controller communication and microphone monitoring continue in the tray. Microphone discovery and mute verification retain their existing feedback-cycle timing; they are deliberately not covered by the slower output cache.
+
+This reduces repeated discovery and UI allocation; CPU savings have not been measured on Windows. Compare Task Manager usage with the same heartbeat/feedback settings, both on the Mixer tab and in the tray. Check that a newly launched mapped app becomes controllable, the refresh button retains selection, and microphone mute/LED feedback still works after reconnecting an input device.
+
+### Settings location
 Configuration is stored per user, not beside the executable. This is a no-install application, but not a fully portable configuration layout.
 Autostart uses `HKCU/Software/Microsoft/Windows/CurrentVersion/Run`. Enable and save it again if you move the EXE. X/minimize hides the window; use **Exit** in the tray menu to stop the application. Running several copies simultaneously is not supported.
 
@@ -66,9 +76,11 @@ Legacy YAML imports process groups and connection settings. This hardware's new 
 ## Microphone behavior and limits
 Privacy mute controls Windows input endpoints, not the mute button inside a meeting app. The confirmed state means the monitored endpoint properties report muted. It does **not** prove silence at a remote participant or across every audio path.
 
-The implementation uses polling. A newly attached or externally unmuted device may transmit before the next poll. Hardware/exclusive paths, virtual routing, app audio sharing, driver behavior and application-specific mute states require separate testing. An endpoint peak reading of zero is not proof of mute.
+The implementation reads actual endpoint mute states on every feedback cycle, including while in the tray. External Windows mute/unmute changes update the GUI and controller feedback on the next cycle. No input volume/gain is changed. Hardware/exclusive paths, virtual routing, app audio sharing, driver behavior and application-specific mute states require separate testing. An endpoint peak reading of zero is not proof of mute.
 
-LED: on = monitored mute confirmed; off = privacy lock inactive; blinking = unknown/disconnected. Releasing privacy mute restores remembered states for currently available devices. Exiting does not automatically unmute devices. A restart loses the in-memory restore snapshot. Do not use this preview as a guaranteed privacy barrier.
+The button reads the monitored inputs before toggling. If all report muted, it explicitly unmutes all of them, including inputs muted externally. Otherwise it requests mute for all monitored inputs. Every write is followed by a readback. Mixed states, read/write failures and missing inputs are reported as mixed/unknown. A mixed group is muted first; a second press unmutes the confirmed group.
+
+LED: on = all monitored inputs report muted; off = all report unmuted; blinking = mixed/unknown/disconnected. Mute is not continuously enforced. Newly connected inputs are monitored at the next poll, but retain their own mute state until an explicit button action. With all-input monitoring disabled, only the current default communications input is monitored and controlled. Exiting does not change mute. Restarting reads the current Windows state. The obsolete `MuteNewCaptureDevicesWhileLocked` configuration field is ignored and removed on the next save. Do not use this preview as a guaranteed privacy barrier.
 
 ## Serial protocol
 New timing fields are appended to the status frame:
@@ -93,6 +105,8 @@ Before publishing a stable binary:
 - Test short/repeated button presses, USB loss and sleep/wake.
 - Inspect UI at 100%, 150% and 200% scaling and test tray exit/autostart.
 - Review mute behavior using all actual microphones and meeting applications.
+- Mute in Windows, then press the hardware button: verify unmute in Windows, GUI and LED. Repeat with external unmute after Deej mute: it must remain unmuted.
+- With multiple inputs, verify mixed-state feedback, first-press mute and second-press unmute. Check disconnect/reconnect, no inputs, and restart while muted. Input gain must stay unchanged.
 
 Known limitations: no complete soft-takeover implementation; polling on the UI thread; grouped volume is an average; firmware buffers a single pending button command; no signed installer; no single-instance guard. These are preview limitations, not production guarantees.
 

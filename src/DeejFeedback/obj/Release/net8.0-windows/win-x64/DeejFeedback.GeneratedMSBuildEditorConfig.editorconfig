@@ -18,6 +18,6 @@ build_property.PlatformNeutralAssembly =
 build_property.EnforceExtendedAnalyzerRules = 
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = DeejFeedback
-build_property.ProjectDir = C:\Users\micro\Downloads\DeejFeedback-Prototype-0.1 (6)\DeejFeedback\src\DeejFeedback\
+build_property.ProjectDir = C:\Users\micro\OneDrive\Documents\GitHub\deej-oled\src\DeejFeedback\
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 

@@ -30,11 +30,15 @@ public partial class MainWindow : Window
     private System.Windows.Forms.ToolStripMenuItem? _trayPrivacyItem;
     private bool _exitRequested;
     private bool _trayHintShown;
+    private PrivacyState? _displayedPrivacy;
+    private bool? _displayedConnection;
 
     public MainWindow()
     {
         InitializeComponent();
+        BuildVersionText.ToolTip = "Running executable: " + Environment.ProcessPath;
         _config = _store.Load();
+        _audio.RefreshRenderInventory();
         InitializeTray();
         BuildChannelCards();
         BuildMappingEditors();
@@ -130,6 +134,7 @@ public partial class MainWindow : Window
 
     private void UpdateRawValuesText(IReadOnlyList<int> values)
     {
+        if (!IsVisible || WindowState == WindowState.Minimized) return;
         RawValuesText.Text = string.Join("   ", values.Select((v, i) => $"A{i} {v,4}"))
             + $"   BTN {(_micButtonStateKnown ? (_lastMicButtonPressed ? "PRESSED" : "released") : "—")}";
     }
@@ -138,7 +143,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_audio.PrivacyLock && _config.MuteNewCaptureDevicesWhileLocked) _privacy = _audio.EnforcePrivacyMute(_config.PrivacyMuteAllCaptureDevices);
+            _audio.RefreshRenderInventory();
+            var mixerVisible = IsVisible && WindowState != WindowState.Minimized && MixerTab.IsSelected;
+            _privacy = _audio.GetPrivacyState(_config.PrivacyMuteAllCaptureDevices);
             if (!_serial.IsConnected && DateTime.UtcNow - _lastReconnectAttempt > TimeSpan.FromSeconds(5))
             {
                 _lastReconnectAttempt = DateTime.UtcNow;
@@ -154,17 +161,20 @@ public partial class MainWindow : Window
                 }
             }
             var sessions = _audio.GetRenderSessions();
-            SessionsList.ItemsSource = sessions.GroupBy(s => s.ProcessName, StringComparer.OrdinalIgnoreCase).Select(g => $"{g.Key}   {g.Average(x => x.Volume):P0}").OrderBy(x => x).ToList();
             foreach (var channel in _config.Channels)
             {
                 var matches = sessions.Where(s => channel.Targets.Contains(s.ProcessName, StringComparer.OrdinalIgnoreCase)).ToList();
                 if (matches.Count > 0) channel.ActualVolume = matches.Average(x => x.Volume);
-                if (!_channelUi.TryGetValue(channel.Index, out var ui)) continue;
+                if (!mixerVisible || !_channelUi.TryGetValue(channel.Index, out var ui)) continue;
                 ui.actual.Value = channel.ActualVolume * 100; ui.physical.Value = channel.MapRawToVolume(channel.RawValue) * 100;
                 ui.detail.Text = $"Windows {channel.ActualVolume:P0}  ·  Fader {channel.MapRawToVolume(channel.RawValue):P0}  ·  {matches.Count} Session(s)";
             }
-            var capture = _audio.GetCaptureDevices();
-            CaptureDevicesList.ItemsSource = capture.Select(d => $"{(d.Muted ? "● MUTED" : "○ AVAILABLE")}  {d.Name}  ·  Level {ToDb(d.Peak):0} dBFS").ToList();
+            if (mixerVisible)
+            {
+                var rows = _audio.GetCaptureDevices().Select(d => $"{(d.Muted ? "● MUTED" : "○ AVAILABLE")}  {d.Name}  ·  Level {ToDb(d.Peak):0} dBFS").ToList();
+                if (CaptureDevicesList.ItemsSource is not List<string> previous || !previous.SequenceEqual(rows))
+                    CaptureDevicesList.ItemsSource = rows;
+            }
             UpdatePrivacyBanner();
             var volumes = _config.Channels.OrderBy(c => c.Index).Select(c => (int)Math.Round(c.ActualVolume * 100)).ToArray();
             _serial.SendFeedback(volumes, _serial.IsConnected ? _privacy : PrivacyState.Disconnected, _config.DisplaySleepSeconds, _config.ControllerHeartbeatMs, _config.FeedbackIntervalMs);
@@ -174,15 +184,49 @@ public partial class MainWindow : Window
     }
 
     private static double ToDb(float value) => value <= 0.000001 ? -96 : 20 * Math.Log10(value);
-    private void TogglePrivacy() { _privacy = _audio.TogglePrivacyMute(_config.PrivacyMuteAllCaptureDevices); UpdatePrivacyBanner(); }
+
+    private void OnMainTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Ignore selection events bubbling from nested lists and combo boxes.
+        if (!_loading && ReferenceEquals(e.OriginalSource, sender) &&
+            AssignmentsTab.IsSelected && SessionsList.ItemsSource is null)
+            RefreshApplications();
+    }
+
+    private void OnRefreshApplications(object sender, RoutedEventArgs e) => RefreshApplications();
+
+    private void RefreshApplications()
+    {
+        try
+        {
+            var selected = SessionsList.SelectedItem as string;
+            _audio.RefreshRenderInventory(force: true);
+            SessionsList.ItemsSource = _audio.GetRenderSessions().Select(s => s.ProcessName)
+                .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s).ToList();
+            SessionsList.SelectedItem = selected;
+            StatusText.Text = $"Applications refreshed at {DateTime.Now:T}. Play audio in an app if it is missing.";
+        }
+        catch (Exception ex) { StatusText.Text = "Application scan failed: " + ex.Message; }
+    }
+    private void TogglePrivacy()
+    {
+        try { _privacy = _audio.TogglePrivacyMute(_config.PrivacyMuteAllCaptureDevices); }
+        catch (Exception ex) { _privacy = PrivacyState.Uncertain; StatusText.Text = "Microphone error: " + ex.Message; }
+        UpdatePrivacyBanner();
+        var volumes = _config.Channels.OrderBy(c => c.Index).Select(c => (int)Math.Round(c.ActualVolume * 100)).ToArray();
+        _serial.SendFeedback(volumes, _serial.IsConnected ? _privacy : PrivacyState.Disconnected,
+            _config.DisplaySleepSeconds, _config.ControllerHeartbeatMs, _config.FeedbackIntervalMs);
+    }
     private void OnPrivacyClicked(object sender, RoutedEventArgs e) => TogglePrivacy();
 
     private void UpdatePrivacyBanner()
     {
+        if (_displayedPrivacy == _privacy) return;
+        _displayedPrivacy = _privacy;
         var (title, detail, color) = _privacy switch
         {
             PrivacyState.MutedConfirmed => ("INPUT MUTE CONFIRMED", "All monitored Windows input endpoints report muted.", "#48272C"),
-            PrivacyState.Uncertain => ("STATE UNKNOWN", "At least one input could not be verified.", "#57451E"),
+            PrivacyState.Uncertain => ("MIXED / UNKNOWN", "Inputs have different mute states, are unavailable, or could not be verified. Press mute to mute all monitored inputs.", "#57451E"),
             PrivacyState.Disconnected => ("CONTROLLER DISCONNECTED", "The hardware button is unavailable.", "#343A46"),
             _ => ("MICROPHONE AVAILABLE", "An input may be available to applications.", "#29423E")
         };
@@ -199,6 +243,8 @@ public partial class MainWindow : Window
 
     private void SetConnectionUi(bool connected)
     {
+        if (_displayedConnection == connected) return;
+        _displayedConnection = connected;
         ConnectionDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(connected ? "#63D7C6" : "#E15B64"));
         ConnectionText.Text = connected ? "Controller connected" : "Controller disconnected";
         ConnectButton.Content = connected ? "Disconnect" : "Connect";
@@ -226,7 +272,7 @@ public partial class MainWindow : Window
         FeedbackIntervalText.Text = _config.FeedbackIntervalMs.ToString();
         _timer.Interval = TimeSpan.FromMilliseconds(_config.FeedbackIntervalMs);
         AutostartCheck.IsChecked = _config.StartWithWindows; StartMinimizedCheck.IsChecked = _config.StartMinimized;
-        AllCaptureCheck.IsChecked = _config.PrivacyMuteAllCaptureDevices; MuteNewCheck.IsChecked = _config.MuteNewCaptureDevicesWhileLocked;
+        AllCaptureCheck.IsChecked = _config.PrivacyMuteAllCaptureDevices;
         DisplaySleepText.Text = _config.DisplaySleepSeconds.ToString(); BaudCombo.SelectedIndex = _config.BaudRate == 9600 ? 0 : 1;
     }
 
@@ -242,7 +288,7 @@ public partial class MainWindow : Window
         _config.ComPort = PortCombo.SelectedItem?.ToString() ?? _config.ComPort;
         _config.BaudRate = int.TryParse((BaudCombo.SelectedItem as ComboBoxItem)?.Content?.ToString(), out var baud) ? baud : 115200;
         _config.StartWithWindows = AutostartCheck.IsChecked == true; _config.StartMinimized = StartMinimizedCheck.IsChecked == true;
-        _config.PrivacyMuteAllCaptureDevices = AllCaptureCheck.IsChecked == true; _config.MuteNewCaptureDevicesWhileLocked = MuteNewCheck.IsChecked == true;
+        _config.PrivacyMuteAllCaptureDevices = AllCaptureCheck.IsChecked == true;
         if (int.TryParse(DisplaySleepText.Text, out var sleep)) _config.DisplaySleepSeconds = Math.Clamp(sleep, 0, 3600);
         foreach (var channel in _config.Channels)
         {

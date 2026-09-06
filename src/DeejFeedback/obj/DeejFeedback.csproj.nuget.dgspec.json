@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\micro\\Downloads\\DeejFeedback-Prototype-0.1 (6)\\DeejFeedback\\src\\DeejFeedback\\DeejFeedback.csproj": {}
+    "C:\\Users\\micro\\OneDrive\\Documents\\GitHub\\deej-oled\\src\\DeejFeedback\\DeejFeedback.csproj": {}
   },
   "projects": {
-    "C:\\Users\\micro\\Downloads\\DeejFeedback-Prototype-0.1 (6)\\DeejFeedback\\src\\DeejFeedback\\DeejFeedback.csproj": {
-      "version": "0.2.0-preview",
+    "C:\\Users\\micro\\OneDrive\\Documents\\GitHub\\deej-oled\\src\\DeejFeedback\\DeejFeedback.csproj": {
+      "version": "0.2.1-preview",
       "restore": {
-        "projectUniqueName": "C:\\Users\\micro\\Downloads\\DeejFeedback-Prototype-0.1 (6)\\DeejFeedback\\src\\DeejFeedback\\DeejFeedback.csproj",
+        "projectUniqueName": "C:\\Users\\micro\\OneDrive\\Documents\\GitHub\\deej-oled\\src\\DeejFeedback\\DeejFeedback.csproj",
         "projectName": "DeejFeedback",
-        "projectPath": "C:\\Users\\micro\\Downloads\\DeejFeedback-Prototype-0.1 (6)\\DeejFeedback\\src\\DeejFeedback\\DeejFeedback.csproj",
+        "projectPath": "C:\\Users\\micro\\OneDrive\\Documents\\GitHub\\deej-oled\\src\\DeejFeedback\\DeejFeedback.csproj",
         "packagesPath": "C:\\Users\\micro\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\micro\\Downloads\\DeejFeedback-Prototype-0.1 (6)\\DeejFeedback\\src\\DeejFeedback\\obj\\",
+        "outputPath": "C:\\Users\\micro\\OneDrive\\Documents\\GitHub\\deej-oled\\src\\DeejFeedback\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\micro\\AppData\\Roaming\\NuGet\\NuGet.Config"
